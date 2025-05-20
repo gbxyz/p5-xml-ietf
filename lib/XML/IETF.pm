@@ -1,9 +1,11 @@
 package XML::IETF;
 # ABSTRACT: an interface to the IETF XML Registry.
 use Carp;
+use Carp::Always;
 use Data::Mirror qw(mirror_xml mirror_file);
 use URI;
 use URI::Namespace;
+use XML::LibXML;
 use constant REGISTRY_URL => 'https://www.iana.org/assignments/xml-registry/xml-registry.xml';
 use feature qw(state);
 use vars qw($REGISTRY);
@@ -22,14 +24,16 @@ state $REGISTRY;
 
     $xsd = XML::IETF->xsd($xmlns); # returns an XML::LibXML::Schema object
 
+    $xsd = XML::IETF->xsd(@uris); # returns a synthesised XML::LibXML::Schema object
+
 =head1 DESCRIPTION
 
 C<XML::IETF> provides a simple interface to the IETF XML Registry, specified in
 L<RFC 3688|https://www.rfc-editor.org/rfc/rfc3688.html>.
 
-This permits for example, dynamically retrieve and load XML schema files using
-only their target namespace or mnemonic name. This is quite useful for schema-
-heavy protocols such as L<EPP|Net::EPP>.
+This permits for example, dynamically retrieval and loading of XML schema files
+using only their target namespace or mnemonic name. This is quite useful for
+schema-heavy protocols such as L<EPP|Net::EPP>.
 
 This module uses L<Data::Mirror> to retrieve remote resources from the IANA.
 
@@ -58,9 +62,9 @@ sub xmlns {
 
 =head2 name($xmlns)
 
-This method is the reverse of C<xmlns()>: given an XML namespace, it returns the
-name that the namespace is registered with. C<$xmlns> may be a string or a
-L<URI::Namespace> object.
+This method is the reverse of C<xmlns()>: given an XML namespace, it returns
+the mnemonic name that the namespace is registered with. C<$xmlns> may be a
+string or a L<URI::Namespace> object.
 
 =cut
 
@@ -104,22 +108,57 @@ sub schemaLocation {
 
 =pod
 
-=head2 xsd($xmlns)
+=head2 xsd($uri|@uris)
 
-This method returns a L<XML::LibXML::Schema> object containg the XML schema that
-is associated with the XML namespace URI in C<$xmlns>, which may be a string or
-a L<URI::Namespace> object, or C<undef> if the record cannot be found.
+This method has two forms:
+
+=over
+
+=item * If a single argument (C<$uri>) is provided, it returns a
+L<XML::LibXML::Schema> object containg the XML schema that is associated with
+the XML namespace URI in C<$uri>, which may be a string or a L<URI::Namespace>
+object, or C<undef> if the record cannot be found.
+
+=item * If an array of URIs (C<@uris>) is provided, it will synthesise a
+schema that imports the XML schema of each XML namespace URI that is provided.
+If any of the provided URIs cannot be resolved to an XML schema, it will throw
+an exception.
+
+=back
 
 =cut
 
 sub xsd {
-    my ($class, $xmlns) = @_;
+    my ($class, @uris) = @_;
 
-    my $url = $class->schemaLocation($xmlns);
+    if (1 == scalar(@uris)) {
+        my $url = $class->schemaLocation($uris[0]);
 
-    return undef if (!$url);
+        return !$url ? undef : XML::LibXML::Schema->new(location => mirror_file($url));
 
-    return XML::LibXML::Schema->new('location' => mirror_file($url));
+    } else {
+        my %xsd;
+
+        foreach my $uri (@uris) {
+            my $name = $class->name($uri);
+            croak("Bad URI '$uri'") unless ($name);
+
+            $xsd{$name} = mirror_file($class->schemaLocation($uri));
+            croak("Bad URI '$uri'") unless ($xsd{$name});
+        }
+
+        my $xsd = XML::LibXML::Document->new;
+        my $schema = $xsd->createElementNS('http://www.w3.org/2001/XMLSchema', 'schema');
+        $xsd->setDocumentElement($schema);
+
+        foreach my $uri (keys(%xsd)) {
+            my $import = $schema->appendChild($xsd->createElement('import'));
+            $import->setAttribute(namespace => $uri);
+            $import->setAttribute(schemaLocation => $xsd{$uri});
+        }
+
+        return XML::LibXML::Schema->new(string => $xsd->toString);
+    }
 }
 
 sub get_registry {
@@ -135,5 +174,35 @@ sub get_registry {
 
     return undef;
 }
+
+=pod
+
+=head1 EXAMPLE
+
+The following code will generate an XSD that can be used to validate all EPP
+command and response frames described by the base EPP protocol
+(L<STD 69|https://datatracker.ietf.org/doc/std95/>):
+
+    $xsd = XML::IETF->xsd(map { XML::IETF->xmlns($_) } qw(
+        eppcom-1.0
+        epp-1.0
+        domain-1.0
+        host-1.0
+    ));
+
+Adding support for EPP extensions is simply a matter of extending the array of
+mnemonics, for example:
+
+    $xsd = XML::IETF->xsd(map { XML::IETF->xmlns($_) } qw(
+        eppcom-1.0
+        epp-1.0
+        domain-1.0
+        host-1.0
+        secDNS-1.0
+        rgp-1.0
+        launch-1.0 mark-1.0 signedMark-1.0
+    ));
+
+=cut
 
 1;

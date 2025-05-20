@@ -34,4 +34,13 @@ is($url->as_string, 'https://www.iana.org/assignments/xml-registry/schema/eppcom
 my $xsd = XML::IETF->xsd($uri);
 isa_ok($xsd, 'XML::LibXML::Schema');
 
+my $xsd = XML::IETF->xsd(map { XML::IETF->xmlns($_) } qw(
+    eppcom-1.0
+    epp-1.0
+    domain-1.0
+    host-1.0
+));
+
+isa_ok($xsd, 'XML::LibXML::Schema');
+
 done_testing;
