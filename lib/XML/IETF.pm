@@ -8,9 +8,11 @@ use URI::Namespace;
 use XML::LibXML;
 use constant REGISTRY_URL => 'https://www.iana.org/assignments/xml-registry/xml-registry.xml';
 use feature qw(state);
-use vars qw($REGISTRY);
+use vars qw($VERSION $REGISTRY);
 use strict;
 use warnings;
+
+$VERSION = '0.01';
 
 state $REGISTRY;
 
